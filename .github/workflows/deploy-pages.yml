@@ -1,0 +1,90 @@
+name: Deploy Flutter Web to GitHub Pages
+
+# Builds the Flutter web app and publishes it to GitHub Pages.
+#
+# REQUIRED SETUP (one time):
+# 1. In your repo: Settings → Pages → "Build and deployment" → Source =
+#    "GitHub Actions".
+# 2. In your repo: Settings → Secrets and variables → Actions → "Variables"
+#    tab → add a repository variable named API_BASE_URL set to your deployed
+#    Render backend URL, e.g. https://mymoney-backend.onrender.com
+#    (No trailing slash.)
+#
+# The base href is derived automatically from the repository name so this
+# works for a project site at https://<user>.github.io/<repo>/.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Compute base href from repo name
+        id: basehref
+        run: echo "value=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_OUTPUT"
+
+      - name: Build web
+        working-directory: frontend
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::warning::API_BASE_URL repository variable is not set. The app will default to http://localhost:8000 and will not reach your hosted backend."
+          fi
+          flutter build web --release \
+            --base-href "${{ steps.basehref.outputs.value }}" \
+            --dart-define=API_BASE_URL="$API_BASE_URL" \
+            --no-tree-shake-icons
+
+      - name: Add SPA fallback and .nojekyll
+        working-directory: frontend/build/web
+        run: |
+          # GitHub Pages serves 404.html for unknown paths; mirroring index.html
+          # lets deep links / refreshes resolve back into the SPA.
+          cp index.html 404.html
+          # Prevent Jekyll from ignoring files that start with an underscore.
+          touch .nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

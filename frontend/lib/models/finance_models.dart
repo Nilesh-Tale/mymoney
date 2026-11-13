@@ -411,6 +411,46 @@ class LoginEvent {
   }
 }
 
+class ActiveSession {
+  const ActiveSession({
+    required this.sessionId,
+    required this.startedAt,
+    required this.lastSeen,
+    required this.ipAddress,
+    required this.userAgent,
+    required this.isCurrent,
+  });
+
+  final String sessionId;
+  final DateTime startedAt;
+  final DateTime lastSeen;
+  final String ipAddress;
+  final String userAgent;
+  final bool isCurrent;
+
+  factory ActiveSession.fromJson(Map<String, dynamic> json) => ActiveSession(
+    sessionId: json['session_id']?.toString() ?? '',
+    startedAt:
+        DateTime.tryParse(json['started_at']?.toString() ?? '') ??
+        DateTime.now(),
+    lastSeen:
+        DateTime.tryParse(json['last_seen']?.toString() ?? '') ??
+        DateTime.now(),
+    ipAddress: json['ip_address']?.toString() ?? '',
+    userAgent: json['user_agent']?.toString() ?? '',
+    isCurrent: json['is_current'] == true,
+  );
+
+  /// Reuse the same user-agent parsing as LoginEvent.
+  String get device => LoginEvent(
+    id: 0,
+    createdAt: lastSeen,
+    success: true,
+    ipAddress: ipAddress,
+    userAgent: userAgent,
+  ).device;
+}
+
 double _number(dynamic value) => value is num
     ? value.toDouble()
     : double.tryParse(value?.toString() ?? '') ?? 0;

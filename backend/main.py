@@ -18,6 +18,7 @@ from models.models import (
     RecurringTransaction,
     LoginEvent,
     SessionHeartbeat,
+    AppSetting,
 )
 from routes.api import router, auth_router
 
@@ -41,8 +42,23 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+def _ensure_session_columns():
+    """Lightweight migration: add columns introduced after session_heartbeats
+    was first created. create_all() does not ALTER existing tables."""
+    statements = [
+        "ALTER TABLE session_heartbeats "
+        "ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE session_heartbeats "
+        "ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ DEFAULT now()",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
 def initialize_database():
     Base.metadata.create_all(bind=engine)
+    _ensure_session_columns()
 
     db = SessionLocal()
 

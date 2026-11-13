@@ -414,6 +414,33 @@ class FinanceService {
         .toList();
   }
 
+  Future<List<ActiveSession>> getActiveSessions() async {
+    final response = await ApiClient.dio.get('/api/activity/sessions');
+    return (response.data as List)
+        .map(
+          (item) =>
+              ActiveSession.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  /// Logs out every other device. Stores the fresh token the server returns so
+  /// the current session stays authenticated.
+  Future<int> logoutOtherDevices() async {
+    final response =
+        await ApiClient.dio.post('/api/activity/logout-others');
+    final data = Map<String, dynamic>.from(response.data as Map);
+    final newToken = data['new_access_token']?.toString();
+    if (newToken != null && newToken.isNotEmpty) {
+      await ApiClient.setToken(newToken);
+    }
+    return (data['revoked_count'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> logoutSession(String sessionId) async {
+    await ApiClient.dio.post('/api/activity/sessions/$sessionId/logout');
+  }
+
   String _dateString(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'

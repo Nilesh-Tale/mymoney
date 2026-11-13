@@ -18,6 +18,7 @@ from auth import (
     rate_limit_check,
     record_failure,
     record_success,
+    REVOKE_CUTOFF_KEY,
 )
 from database.connection import get_db
 from models.models import (
@@ -30,6 +31,7 @@ from models.models import (
     RecurringTransaction,
     LoginEvent,
     SessionHeartbeat,
+    AppSetting,
 )
 from schemas.schemas import (
     AccountCreate,
@@ -46,6 +48,8 @@ from schemas.schemas import (
     LoginResponse,
     LoginEventResponse,
     ActivitySummary,
+    ActiveSession,
+    RevokeResult,
     BudgetCreate,
     BudgetUpdate,
     BudgetResponse,
@@ -268,6 +272,116 @@ def activity_logins(limit: int = 50, db: Session = Depends(get_db)):
     return db.query(LoginEvent).order_by(
         LoginEvent.created_at.desc()
     ).limit(limit).all()
+
+
+@router.get("/activity/sessions", response_model=list[ActiveSession])
+def active_sessions(
+    current_sid: str | None = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Sessions seen within the active window, not revoked. The caller's own
+    session is flagged with is_current."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=ACTIVE_WINDOW_MINUTES)
+
+    rows = db.query(SessionHeartbeat).filter(
+        SessionHeartbeat.last_seen >= cutoff,
+        SessionHeartbeat.revoked.is_(False),
+    ).order_by(SessionHeartbeat.last_seen.desc()).all()
+
+    return [
+        ActiveSession(
+            session_id=row.session_id,
+            started_at=row.started_at,
+            last_seen=row.last_seen,
+            ip_address=row.ip_address,
+            user_agent=row.user_agent,
+            is_current=(row.session_id == current_sid),
+        )
+        for row in rows
+    ]
+
+
+@router.post("/activity/logout-others", response_model=RevokeResult)
+def logout_other_devices(
+    current_sid: str | None = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Revoke every session except the caller's.
+
+    Sets a global cutoff to now (invalidating all existing tokens) and issues
+    a fresh token for the current session so the caller stays logged in. The
+    new token is returned via the X-New-Token response header.
+    """
+    now = datetime.now(timezone.utc)
+
+    # Two-layer revocation so it is precise and timing-proof:
+    # 1) Mark every known OTHER session's heartbeat as revoked (covers sessions
+    #    we have a heartbeat row for).
+    # 2) Also raise the global cutoff to now, which kills any token issued
+    #    earlier that we might not have a heartbeat for. The caller then gets a
+    #    brand-new token (iat = now) so they survive the cutoff.
+    other = db.query(SessionHeartbeat).filter(
+        SessionHeartbeat.session_id != (current_sid or ""),
+        SessionHeartbeat.revoked.is_(False),
+    )
+    revoked = other.count()
+    other.update({SessionHeartbeat.revoked: True}, synchronize_session=False)
+
+    cutoff_ts = int(now.timestamp())
+    setting = db.get(AppSetting, REVOKE_CUTOFF_KEY)
+    if setting is None:
+        db.add(AppSetting(key=REVOKE_CUTOFF_KEY, value=str(cutoff_ts)))
+    else:
+        setting.value = str(cutoff_ts)
+
+    # Issue the caller a fresh token AFTER the cutoff so they stay logged in.
+    # Its iat (>= cutoff) passes the global check, and its own heartbeat is not
+    # revoked.
+    new_token = None
+    if current_sid:
+        new_token = create_token(current_sid)
+        # Make sure the current session's heartbeat is present and un-revoked.
+        hb = db.get(SessionHeartbeat, current_sid)
+        if hb is not None:
+            hb.revoked = False
+
+    db.commit()
+
+    return RevokeResult(
+        revoked_count=revoked,
+        message="All other devices have been logged out.",
+        new_access_token=new_token,
+    )
+
+
+@router.post(
+    "/activity/sessions/{session_id}/logout",
+    response_model=RevokeResult,
+)
+def logout_one_session(
+    session_id: str,
+    current_sid: str | None = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Revoke a single session by id."""
+    if session_id == current_sid:
+        raise HTTPException(
+            status_code=400,
+            detail="Use the Log out button to end your own session.",
+        )
+
+    hb = db.get(SessionHeartbeat, session_id)
+    if hb is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    hb.revoked = True
+    db.commit()
+
+    return RevokeResult(
+        revoked_count=1,
+        message="Device logged out.",
+    )
 
 
 # ---------------------------------------------------------

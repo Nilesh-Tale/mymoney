@@ -45,6 +45,23 @@ class ActivitySummary(BaseModel):
     recent_failed_24h: int
 
 
+class ActiveSession(BaseModel):
+    session_id: str
+    started_at: datetime
+    last_seen: datetime
+    ip_address: str
+    user_agent: str
+    is_current: bool
+
+
+class RevokeResult(BaseModel):
+    revoked_count: int
+    message: str
+    # Present only for "logout others": a fresh token for the caller's session
+    # so they are not logged out by their own global revoke cutoff.
+    new_access_token: str | None = None
+
+
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     account_type: Literal["bank", "cash", "wallet", "credit_card", "other"]

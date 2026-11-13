@@ -3316,10 +3316,244 @@ class ActivityScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           if (summary.recentFailed24h > 0) _securityBanner(summary),
           if (summary.recentFailed24h > 0) const SizedBox(height: 16),
+          _sessionsCard(context, ref),
+          const SizedBox(height: 16),
           _historyCard(context, ref, historyAsync),
         ],
       ),
     );
+  }
+
+  Widget _sessionsCard(BuildContext context, WidgetRef ref) {
+    final sessionsAsync = ref.watch(activeSessionsProvider);
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Currently viewing',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.text,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Devices active in the last 5 minutes.',
+                      style: TextStyle(fontSize: 11, color: AppTheme.muted),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _logoutOthers(context, ref),
+                icon: const Icon(Icons.logout_rounded, size: 16),
+                label: const Text(
+                  'Log out all others',
+                  style: TextStyle(fontSize: 12),
+                ),
+                style: TextButton.styleFrom(foregroundColor: AppTheme.red),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          sessionsAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (e, _) => Text(
+              ApiClient.errorMessage(e),
+              style: const TextStyle(color: AppTheme.red, fontSize: 12),
+            ),
+            data: (sessions) {
+              if (sessions.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 14),
+                  child: Text(
+                    'No active sessions right now.',
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12),
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  for (final s in sessions)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Row(
+                        children: [
+                          Container(
+                            height: 34,
+                            width: 34,
+                            decoration: BoxDecoration(
+                              color: AppTheme.primary.withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(
+                              Icons.devices_rounded,
+                              size: 17,
+                              color: AppTheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        s.device,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: AppTheme.text,
+                                        ),
+                                      ),
+                                    ),
+                                    if (s.isCurrent) ...[
+                                      const SizedBox(width: 7),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.green
+                                              .withValues(alpha: 0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                        ),
+                                        child: const Text(
+                                          'This device',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppTheme.green,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${s.ipAddress.isEmpty ? 'unknown IP' : s.ipAddress} • active ${_ago(s.lastSeen)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: AppTheme.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!s.isCurrent)
+                            IconButton(
+                              tooltip: 'Log out this device',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () =>
+                                  _logoutOne(context, ref, s),
+                              icon: const Icon(
+                                Icons.logout_rounded,
+                                size: 17,
+                                color: AppTheme.red,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _ago(DateTime t) {
+    final diff = DateTime.now().difference(t.toLocal());
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return DateFormat('dd MMM').format(t.toLocal());
+  }
+
+  Future<void> _logoutOthers(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Log out all other devices?'),
+        content: const Text(
+          'Every device except this one will be signed out immediately and '
+          'will need the password to log back in.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Log out others'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final count =
+          await ref.read(financeServiceProvider).logoutOtherDevices();
+      ref.invalidate(activeSessionsProvider);
+      ref.invalidate(activitySummaryProvider);
+      if (context.mounted) {
+        showMessage(
+          context,
+          count == 0
+              ? 'No other devices were active.'
+              : 'Logged out $count other device${count == 1 ? '' : 's'}.',
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showMessage(context, ApiClient.errorMessage(e), isError: true);
+      }
+    }
+  }
+
+  Future<void> _logoutOne(
+    BuildContext context,
+    WidgetRef ref,
+    ActiveSession session,
+  ) async {
+    try {
+      await ref.read(financeServiceProvider).logoutSession(session.sessionId);
+      ref.invalidate(activeSessionsProvider);
+      ref.invalidate(activitySummaryProvider);
+      if (context.mounted) showMessage(context, 'Device logged out.');
+    } catch (e) {
+      if (context.mounted) {
+        showMessage(context, ApiClient.errorMessage(e), isError: true);
+      }
+    }
   }
 
   Widget _statGrid(ActivitySummary s) {

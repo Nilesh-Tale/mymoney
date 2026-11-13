@@ -18,6 +18,13 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
+from database.connection import get_db
+
+# Settings key used to store the global "log out all devices" cutoff: any token
+# with iat < this unix timestamp is rejected.
+REVOKE_CUTOFF_KEY = "session_revoke_cutoff"
 
 _ALGORITHM = "HS256"
 
@@ -134,14 +141,34 @@ def _decode(token: str) -> dict:
     return jwt.decode(token, _jwt_secret(), algorithms=[_ALGORITHM])
 
 
+def _revoke_cutoff(db: Session) -> int:
+    # Imported here to avoid a circular import at module load time.
+    from models.models import AppSetting
+
+    row = db.get(AppSetting, REVOKE_CUTOFF_KEY)
+    if row is None or not row.value:
+        return 0
+    try:
+        return int(row.value)
+    except ValueError:
+        return 0
+
+
 def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
 ) -> str | None:
     """FastAPI dependency that rejects requests without a valid token.
+
+    Also enforces session revocation:
+      - a global cutoff ("log out all other devices"), and
+      - a per-session revoked flag ("log out this device").
 
     Returns the session id from the token (or None in no-password dev mode) so
     routes can record a heartbeat.
     """
+    from models.models import SessionHeartbeat
+
     # If no password is configured (local dev), skip the check entirely.
     if _app_password() is None:
         return None
@@ -168,4 +195,25 @@ def require_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return payload.get("sid")
+    sid = payload.get("sid")
+    issued_at = int(payload.get("iat", 0))
+
+    # Global revocation: token issued before the cutoff is dead.
+    if issued_at < _revoke_cutoff(db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session was logged out remotely. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Per-session revocation.
+    if sid:
+        hb = db.get(SessionHeartbeat, sid)
+        if hb is not None and hb.revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This device was logged out remotely. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return sid

@@ -167,5 +167,20 @@ class SessionHeartbeat(Base):
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(400), default="")
+    # When true, this specific session's token is rejected (forced logout).
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class AppSetting(Base):
+    """Simple key/value store for app-wide settings, e.g. the global session
+    revoke cutoff used by 'log out all other devices'."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200), default="")

@@ -72,3 +72,7 @@ final activitySummaryProvider = FutureProvider<ActivitySummary>(
 final loginHistoryProvider = FutureProvider<List<LoginEvent>>(
   (ref) => ref.watch(financeServiceProvider).getLoginHistory(limit: 100),
 );
+
+final activeSessionsProvider = FutureProvider<List<ActiveSession>>(
+  (ref) => ref.watch(financeServiceProvider).getActiveSessions(),
+);

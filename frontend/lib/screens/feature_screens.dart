@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../core/api_client.dart';
 import '../models/finance_models.dart';
 import '../providers/finance_providers.dart';
+import 'transaction_screen.dart' show TransactionEditorDialog;
 
 // ---------------------------------------------------------
 // SHARED STYLING + HELPERS
@@ -732,6 +733,10 @@ class IncomeExpenseScreen extends ConsumerWidget {
               subtitle: isIncome
                   ? 'All money coming in, grouped and totalled.'
                   : 'All money going out, grouped and totalled.',
+              action: primaryButton(
+                label: isIncome ? 'Add Income' : 'Add Expense',
+                onPressed: () => _add(context, ref, accounts, categories),
+              ),
             ),
             const SizedBox(height: 20),
             Container(
@@ -919,13 +924,52 @@ class IncomeExpenseScreen extends ConsumerWidget {
                             ],
                           ),
                         ),
-                        Text(
-                          '${isIncome ? '+' : '−'}${currencyFormat.format(t.amount)}',
-                          style: TextStyle(
-                            color: accent,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${isIncome ? '+' : '−'}${currencyFormat.format(t.amount)}',
+                              style: TextStyle(
+                                color: accent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Edit',
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints(),
+                                  padding: const EdgeInsets.all(4),
+                                  onPressed: () => _edit(
+                                    context,
+                                    ref,
+                                    t,
+                                    accounts,
+                                    categories,
+                                  ),
+                                  icon: const Icon(Icons.edit_outlined, size: 17),
+                                ),
+                                const SizedBox(width: 2),
+                                IconButton(
+                                  tooltip: 'Delete',
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints(),
+                                  padding: const EdgeInsets.all(4),
+                                  onPressed: () => _delete(context, ref, t),
+                                  icon: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 18,
+                                    color: AppTheme.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -936,6 +980,107 @@ class IncomeExpenseScreen extends ConsumerWidget {
         );
       },
     );
+  }
+
+  Future<void> _add(
+    BuildContext context,
+    WidgetRef ref,
+    List<FinanceAccount> accounts,
+    List<FinanceCategory> categories,
+  ) async {
+    if (accounts.isEmpty) {
+      showMessage(
+        context,
+        'Create an account first (Accounts page).',
+        isError: true,
+      );
+      return;
+    }
+    if (categories.isEmpty) {
+      showMessage(context, 'Still loading categories.', isError: true);
+      return;
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TransactionEditorDialog(
+        accounts: accounts,
+        categories: categories,
+        initialIncome: isIncome,
+      ),
+    );
+    if (saved == true) {
+      ref.invalidate(transactionsProvider);
+      if (context.mounted) {
+        showMessage(context, isIncome ? 'Income added.' : 'Expense added.');
+      }
+    }
+  }
+
+  Future<void> _edit(
+    BuildContext context,
+    WidgetRef ref,
+    FinanceTransaction transaction,
+    List<FinanceAccount> accounts,
+    List<FinanceCategory> categories,
+  ) async {
+    if (accounts.isEmpty || categories.isEmpty) {
+      showMessage(context, 'Still loading accounts/categories.', isError: true);
+      return;
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TransactionEditorDialog(
+        accounts: accounts,
+        categories: categories,
+        transaction: transaction,
+      ),
+    );
+    if (saved == true) {
+      ref.invalidate(transactionsProvider);
+      if (context.mounted) showMessage(context, 'Transaction updated.');
+    }
+  }
+
+  Future<void> _delete(
+    BuildContext context,
+    WidgetRef ref,
+    FinanceTransaction transaction,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Delete transaction?'),
+        content: Text(
+          '"${transaction.description.isEmpty ? 'Untitled transaction' : transaction.description}" '
+          'will be permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(financeServiceProvider).deleteTransaction(transaction.id);
+      ref.invalidate(transactionsProvider);
+      if (context.mounted) showMessage(context, 'Transaction deleted.');
+    } catch (e) {
+      if (context.mounted) {
+        showMessage(context, ApiClient.errorMessage(e), isError: true);
+      }
+    }
   }
 }
 

@@ -67,7 +67,7 @@ class _TransactionManagementScreenState
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _TransactionEditorDialog(
+      builder: (_) => TransactionEditorDialog(
         accounts: accounts,
         categories: categories,
         transaction: transaction,
@@ -757,24 +757,29 @@ class _TransactionManagementScreenState
   }
 }
 
-class _TransactionEditorDialog extends ConsumerStatefulWidget {
-  const _TransactionEditorDialog({
+class TransactionEditorDialog extends ConsumerStatefulWidget {
+  const TransactionEditorDialog({
     required this.accounts,
     required this.categories,
     this.transaction,
+    this.initialIncome = false,
   });
 
   final List<FinanceAccount> accounts;
   final List<FinanceCategory> categories;
   final FinanceTransaction? transaction;
 
+  /// When adding a new transaction, preselect income vs expense. Ignored when
+  /// editing (the existing transaction's type is used).
+  final bool initialIncome;
+
   @override
-  ConsumerState<_TransactionEditorDialog> createState() =>
-      _TransactionEditorDialogState();
+  ConsumerState<TransactionEditorDialog> createState() =>
+      TransactionEditorDialogState();
 }
 
-class _TransactionEditorDialogState
-    extends ConsumerState<_TransactionEditorDialog> {
+class TransactionEditorDialogState
+    extends ConsumerState<TransactionEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _descriptionController;
   late final TextEditingController _amountController;
@@ -796,7 +801,7 @@ class _TransactionEditorDialogState
     _amountController = TextEditingController(
       text: t == null ? '' : t.amount.toStringAsFixed(2),
     );
-    _income = t?.isIncome ?? false;
+    _income = t?.isIncome ?? widget.initialIncome;
     _accountId = t?.accountId ?? widget.accounts.first.id;
     _date = t?.transactionDate ?? DateTime.now();
     final available = _availableCategories;

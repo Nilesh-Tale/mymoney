@@ -325,6 +325,92 @@ class AnalyticsSummary {
   }
 }
 
+class ActivitySummary {
+  const ActivitySummary({
+    required this.activeViewers,
+    required this.totalLogins,
+    required this.successfulLogins,
+    required this.failedLogins,
+    required this.lastLoginAt,
+    required this.recentFailed24h,
+  });
+
+  final int activeViewers;
+  final int totalLogins;
+  final int successfulLogins;
+  final int failedLogins;
+  final DateTime? lastLoginAt;
+  final int recentFailed24h;
+
+  factory ActivitySummary.fromJson(Map<String, dynamic> json) =>
+      ActivitySummary(
+        activeViewers: (json['active_viewers'] as num?)?.toInt() ?? 0,
+        totalLogins: (json['total_logins'] as num?)?.toInt() ?? 0,
+        successfulLogins: (json['successful_logins'] as num?)?.toInt() ?? 0,
+        failedLogins: (json['failed_logins'] as num?)?.toInt() ?? 0,
+        lastLoginAt: json['last_login_at'] == null
+            ? null
+            : DateTime.tryParse(json['last_login_at'].toString()),
+        recentFailed24h: (json['recent_failed_24h'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class LoginEvent {
+  const LoginEvent({
+    required this.id,
+    required this.createdAt,
+    required this.success,
+    required this.ipAddress,
+    required this.userAgent,
+  });
+
+  final int id;
+  final DateTime createdAt;
+  final bool success;
+  final String ipAddress;
+  final String userAgent;
+
+  factory LoginEvent.fromJson(Map<String, dynamic> json) => LoginEvent(
+    id: (json['id'] as num).toInt(),
+    createdAt:
+        DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+        DateTime.now(),
+    success: json['success'] == true,
+    ipAddress: json['ip_address']?.toString() ?? '',
+    userAgent: json['user_agent']?.toString() ?? '',
+  );
+
+  /// A short, human-friendly device/browser label derived from the user-agent.
+  String get device {
+    final ua = userAgent.toLowerCase();
+    String os = 'Unknown';
+    if (ua.contains('android')) {
+      os = 'Android';
+    } else if (ua.contains('iphone') || ua.contains('ipad') || ua.contains('ios')) {
+      os = 'iOS';
+    } else if (ua.contains('windows')) {
+      os = 'Windows';
+    } else if (ua.contains('mac os') || ua.contains('macintosh')) {
+      os = 'macOS';
+    } else if (ua.contains('linux')) {
+      os = 'Linux';
+    } else if (ua.contains('curl')) {
+      os = 'curl';
+    }
+    String browser = '';
+    if (ua.contains('edg/')) {
+      browser = 'Edge';
+    } else if (ua.contains('chrome')) {
+      browser = 'Chrome';
+    } else if (ua.contains('firefox')) {
+      browser = 'Firefox';
+    } else if (ua.contains('safari')) {
+      browser = 'Safari';
+    }
+    return browser.isEmpty ? os : '$browser · $os';
+  }
+}
+
 double _number(dynamic value) => value is num
     ? value.toDouble()
     : double.tryParse(value?.toString() ?? '') ?? 0;

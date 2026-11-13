@@ -64,3 +64,11 @@ final analyticsProvider = FutureProvider<AnalyticsSummary>((ref) {
 final profileProvider = FutureProvider(
   (ref) => ref.watch(financeServiceProvider).getProfile(),
 );
+
+final activitySummaryProvider = FutureProvider<ActivitySummary>(
+  (ref) => ref.watch(financeServiceProvider).getActivitySummary(),
+);
+
+final loginHistoryProvider = FutureProvider<List<LoginEvent>>(
+  (ref) => ref.watch(financeServiceProvider).getLoginHistory(limit: 100),
+);

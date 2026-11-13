@@ -81,6 +81,7 @@ class _MainDashboardState extends ConsumerState<MainDashboard> {
     'Recurring',
     'Accounts',
     'Analytics',
+    'Activity',
     'Settings',
   ];
   final menuIcons = const [
@@ -93,6 +94,7 @@ class _MainDashboardState extends ConsumerState<MainDashboard> {
     Icons.autorenew_rounded,
     Icons.account_balance_rounded,
     Icons.bar_chart_rounded,
+    Icons.shield_outlined,
     Icons.settings_rounded,
   ];
 
@@ -419,6 +421,8 @@ class _MainDashboardState extends ConsumerState<MainDashboard> {
       case 8:
         return const AnalyticsScreen();
       case 9:
+        return const ActivityScreen();
+      case 10:
         return const SettingsScreen();
       default:
         return buildDashboard();

@@ -391,6 +391,29 @@ class FinanceService {
     );
   }
 
+  // ---------------------------------------------------------
+  // ACTIVITY / MONITORING
+  // ---------------------------------------------------------
+
+  Future<ActivitySummary> getActivitySummary() async {
+    final response = await ApiClient.dio.get('/api/activity/summary');
+    return ActivitySummary.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
+  Future<List<LoginEvent>> getLoginHistory({int limit = 50}) async {
+    final response = await ApiClient.dio.get(
+      '/api/activity/logins',
+      queryParameters: {'limit': limit},
+    );
+    return (response.data as List)
+        .map(
+          (item) => LoginEvent.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
   String _dateString(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'

@@ -3129,3 +3129,223 @@ class _CategoryEditorDialogState extends ConsumerState<_CategoryEditorDialog> {
     );
   }
 }
+
+// ---------------------------------------------------------
+// ACTIVITY / MONITORING PAGE
+// ---------------------------------------------------------
+
+class ActivityScreen extends ConsumerWidget {
+  const ActivityScreen({super.key});
+
+  Future<void> _refresh(WidgetRef ref) async {
+    ref.invalidate(activitySummaryProvider);
+    ref.invalidate(loginHistoryProvider);
+    await Future.wait([
+      ref.read(activitySummaryProvider.future),
+      ref.read(loginHistoryProvider.future),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summaryAsync = ref.watch(activitySummaryProvider);
+    final historyAsync = ref.watch(loginHistoryProvider);
+
+    return summaryAsync.when(
+      loading: () =>
+          const Center(child: CircularProgressIndicator(color: AppTheme.primary)),
+      error: (e, _) => AsyncStatePanel(
+        title: 'Unable to load activity',
+        message: ApiClient.errorMessage(e),
+        onRetry: () => _refresh(ref),
+      ),
+      data: (summary) => FeatureScaffold(
+        onRefresh: () => _refresh(ref),
+        children: [
+          const PageHeader(
+            title: 'Activity',
+            subtitle: 'Who is viewing the app and the login history.',
+          ),
+          const SizedBox(height: 20),
+          _statGrid(summary),
+          const SizedBox(height: 16),
+          if (summary.recentFailed24h > 0) _securityBanner(summary),
+          if (summary.recentFailed24h > 0) const SizedBox(height: 16),
+          _historyCard(context, ref, historyAsync),
+        ],
+      ),
+    );
+  }
+
+  Widget _statGrid(ActivitySummary s) {
+    final lastLogin = s.lastLoginAt == null
+        ? '—'
+        : DateFormat('dd MMM, HH:mm').format(s.lastLoginAt!.toLocal());
+    final cards = [
+      _StatCard('Active now', '${s.activeViewers}',
+          Icons.visibility_rounded, AppTheme.green),
+      _StatCard('Successful logins', '${s.successfulLogins}',
+          Icons.login_rounded, AppTheme.primary),
+      _StatCard('Failed attempts', '${s.failedLogins}',
+          Icons.gpp_bad_rounded, AppTheme.red),
+      _StatCard('Last login', lastLogin,
+          Icons.schedule_rounded, AppTheme.amber),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cols = constraints.maxWidth < 560 ? 2 : 4;
+        return GridView.count(
+          crossAxisCount: cols,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.45,
+          children: cards,
+        );
+      },
+    );
+  }
+
+  Widget _securityBanner(ActivitySummary s) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.red.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.red.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: AppTheme.red),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '${s.recentFailed24h} failed login attempt'
+              '${s.recentFailed24h == 1 ? '' : 's'} in the last 24 hours. '
+              'If this was not you, consider changing the app password.',
+              style: const TextStyle(fontSize: 12, color: AppTheme.text),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _historyCard(
+    BuildContext context,
+    WidgetRef ref,
+    AsyncValue<List<LoginEvent>> historyAsync,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Login history',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.text,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Most recent login attempts across all devices.',
+            style: TextStyle(fontSize: 11, color: AppTheme.muted),
+          ),
+          const SizedBox(height: 14),
+          historyAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (e, _) => Text(
+              ApiClient.errorMessage(e),
+              style: const TextStyle(color: AppTheme.red, fontSize: 12),
+            ),
+            data: (events) {
+              if (events.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    'No login activity recorded yet.',
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12),
+                  ),
+                );
+              }
+              return Column(
+                children: [
+                  for (final e in events)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Row(
+                        children: [
+                          Container(
+                            height: 34,
+                            width: 34,
+                            decoration: BoxDecoration(
+                              color: (e.success ? AppTheme.green : AppTheme.red)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(
+                              e.success
+                                  ? Icons.check_rounded
+                                  : Icons.close_rounded,
+                              size: 17,
+                              color: e.success ? AppTheme.green : AppTheme.red,
+                            ),
+                          ),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  e.success ? 'Successful login' : 'Failed attempt',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: e.success
+                                        ? AppTheme.text
+                                        : AppTheme.red,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${e.device} • ${e.ipAddress.isEmpty ? 'unknown IP' : e.ipAddress}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: AppTheme.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            DateFormat('dd MMM\nHH:mm')
+                                .format(e.createdAt.toLocal()),
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: AppTheme.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}

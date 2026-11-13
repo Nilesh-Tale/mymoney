@@ -17,6 +17,34 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class LoginEventResponse(BaseModel):
+    id: int
+    created_at: datetime
+    success: bool
+    ip_address: str
+    user_agent: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActivitySummary(BaseModel):
+    active_viewers: int
+    total_logins: int
+    successful_logins: int
+    failed_logins: int
+    last_login_at: datetime | None
+    recent_failed_24h: int
+
+
 class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     account_type: Literal["bank", "cash", "wallet", "credit_card", "other"]

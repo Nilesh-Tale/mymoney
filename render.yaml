@@ -25,3 +25,22 @@ services:
       # Example: https://your-username.github.io
       - key: CORS_ALLOW_ORIGINS
         sync: false
+      # The single shared password required to log into the app.
+      # Set this in the Render dashboard (keep it secret, not in git).
+      - key: APP_PASSWORD
+        sync: false
+      # Secret used to sign login tokens. Render can generate a random value.
+      - key: JWT_SECRET
+        generateValue: true
+      # How long a login stays valid, in days.
+      - key: JWT_TTL_DAYS
+        value: "30"
+      # Login rate limiting (brute-force protection). After LOGIN_MAX_FAILURES
+      # failed attempts from one IP within LOGIN_WINDOW_SECONDS, that IP is
+      # locked out for LOGIN_LOCKOUT_SECONDS.
+      - key: LOGIN_MAX_FAILURES
+        value: "5"
+      - key: LOGIN_WINDOW_SECONDS
+        value: "900"
+      - key: LOGIN_LOCKOUT_SECONDS
+        value: "900"

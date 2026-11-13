@@ -135,3 +135,37 @@ class RecurringTransaction(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     next_due_date: Mapped[date] = mapped_column(Date, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class LoginEvent(Base):
+    """One row per login attempt — the basis for login history and the
+    active-viewers / activity dashboard."""
+
+    __tablename__ = "login_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(400), default="")
+    # Short random id identifying the issued session token (success only).
+    # Used to count distinct active viewers without storing the token itself.
+    session_id: Mapped[str | None] = mapped_column(
+        String(40), nullable=True, index=True
+    )
+
+
+class SessionHeartbeat(Base):
+    """Last-seen timestamp per active session, refreshed on each authenticated
+    request. Active viewers = distinct sessions seen in the last few minutes."""
+
+    __tablename__ = "session_heartbeats"
+
+    session_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(400), default="")

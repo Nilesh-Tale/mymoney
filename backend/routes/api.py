@@ -6,6 +6,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from datetime import datetime, timezone
+
+from fastapi import Request
+
+from auth import (
+    require_auth,
+    verify_password,
+    create_token,
+    new_session_id,
+    rate_limit_check,
+    record_failure,
+    record_success,
+)
 from database.connection import get_db
 from models.models import (
     User,
@@ -15,6 +28,8 @@ from models.models import (
     Budget,
     SavingsGoal,
     RecurringTransaction,
+    LoginEvent,
+    SessionHeartbeat,
 )
 from schemas.schemas import (
     AccountCreate,
@@ -27,6 +42,10 @@ from schemas.schemas import (
     TransactionUpdate,
     TransactionResponse,
     UserResponse,
+    LoginRequest,
+    LoginResponse,
+    LoginEventResponse,
+    ActivitySummary,
     BudgetCreate,
     BudgetUpdate,
     BudgetResponse,
@@ -43,9 +62,120 @@ from schemas.schemas import (
     MonthlyTrendItem,
 )
 
-router = APIRouter(prefix="/api", tags=["Personal Finance"])
+# Public router: login lives here and is NOT behind the auth guard.
+auth_router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
-# Initial single-user setup. Authentication will be added in a later stage.
+
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP behind Render/Cloudflare proxies."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        # First entry is the original client.
+        return forwarded.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "")[:64]
+
+
+def _user_agent(request: Request) -> str:
+    return request.headers.get("user-agent", "")[:400]
+
+
+@auth_router.post("/login", response_model=LoginResponse)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = _client_ip(request)
+    ua = _user_agent(request)
+
+    # 1) Rate-limit: reject if this IP is currently locked out.
+    locked_for = rate_limit_check(ip)
+    if locked_for is not None:
+        db.add(LoginEvent(success=False, ip_address=ip, user_agent=ua))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Too many failed attempts. Try again in "
+                f"{max(1, locked_for // 60)} minute(s)."
+            ),
+            headers={"Retry-After": str(locked_for)},
+        )
+
+    # 2) Verify the shared password.
+    if not verify_password(payload.password):
+        record_failure(ip)
+        db.add(LoginEvent(success=False, ip_address=ip, user_agent=ua))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password.",
+        )
+
+    # 3) Success: clear failures, issue token, log the event.
+    record_success(ip)
+    session_id = new_session_id()
+    db.add(
+        LoginEvent(
+            success=True,
+            ip_address=ip,
+            user_agent=ua,
+            session_id=session_id,
+        )
+    )
+    db.add(
+        SessionHeartbeat(
+            session_id=session_id,
+            ip_address=ip,
+            user_agent=ua,
+        )
+    )
+    db.commit()
+
+    return LoginResponse(access_token=create_token(session_id))
+
+
+# Active-viewers window: a session counts as "active" if seen within this many
+# minutes.
+ACTIVE_WINDOW_MINUTES = 5
+
+
+def track_session(
+    request: Request,
+    session_id: str | None = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> None:
+    """Auth guard + heartbeat. Depends on require_auth (so unauthenticated
+    requests are rejected before this runs) and refreshes the session's
+    last-seen timestamp used for the active-viewers count."""
+    if session_id is None:
+        return  # no-password dev mode
+
+    now = datetime.now(timezone.utc)
+    hb = db.get(SessionHeartbeat, session_id)
+    if hb is None:
+        db.add(
+            SessionHeartbeat(
+                session_id=session_id,
+                last_seen=now,
+                ip_address=_client_ip(request),
+                user_agent=_user_agent(request),
+            )
+        )
+    else:
+        hb.last_seen = now
+    db.commit()
+
+
+# Data router: every route below requires a valid token and records a
+# heartbeat for the active-viewers metric.
+router = APIRouter(
+    prefix="/api",
+    tags=["Personal Finance"],
+    dependencies=[Depends(track_session)],
+)
+
+# Single shared account. All data belongs to this one user.
 DEFAULT_USER_ID = 1
 
 
@@ -91,6 +221,53 @@ def get_category(db: Session, category_id: int):
 @router.get("/users/me", response_model=UserResponse)
 def get_profile(db: Session = Depends(get_db)):
     return get_default_user(db)
+
+
+# ---------------------------------------------------------
+# ACTIVITY / MONITORING
+# ---------------------------------------------------------
+
+@router.get("/activity/summary", response_model=ActivitySummary)
+def activity_summary(db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    active_cutoff = now - timedelta(minutes=ACTIVE_WINDOW_MINUTES)
+    day_cutoff = now - timedelta(hours=24)
+
+    active_viewers = db.query(func.count(SessionHeartbeat.session_id)).filter(
+        SessionHeartbeat.last_seen >= active_cutoff
+    ).scalar() or 0
+
+    total = db.query(func.count(LoginEvent.id)).scalar() or 0
+    successful = db.query(func.count(LoginEvent.id)).filter(
+        LoginEvent.success.is_(True)
+    ).scalar() or 0
+    failed = total - successful
+
+    recent_failed = db.query(func.count(LoginEvent.id)).filter(
+        LoginEvent.success.is_(False),
+        LoginEvent.created_at >= day_cutoff,
+    ).scalar() or 0
+
+    last_success = db.query(LoginEvent).filter(
+        LoginEvent.success.is_(True)
+    ).order_by(LoginEvent.created_at.desc()).first()
+
+    return ActivitySummary(
+        active_viewers=active_viewers,
+        total_logins=total,
+        successful_logins=successful,
+        failed_logins=failed,
+        last_login_at=last_success.created_at if last_success else None,
+        recent_failed_24h=recent_failed,
+    )
+
+
+@router.get("/activity/logins", response_model=list[LoginEventResponse])
+def activity_logins(limit: int = 50, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 200))
+    return db.query(LoginEvent).order_by(
+        LoginEvent.created_at.desc()
+    ).limit(limit).all()
 
 
 # ---------------------------------------------------------

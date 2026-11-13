@@ -16,8 +16,10 @@ from models.models import (
     Budget,
     SavingsGoal,
     RecurringTransaction,
+    LoginEvent,
+    SessionHeartbeat,
 )
-from routes.api import router
+from routes.api import router, auth_router
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -106,6 +108,7 @@ app = FastAPI(
 
 
 
+app.include_router(auth_router)
 app.include_router(router)
 
 # CORS configuration.

@@ -7,28 +7,44 @@ import 'core/api_client.dart';
 import 'models/finance_models.dart';
 import 'providers/finance_providers.dart';
 import 'screens/feature_screens.dart';
+import 'screens/login_screen.dart';
 import 'screens/transaction_screen.dart';
 
-void main() => runApp(const ProviderScope(child: SayaliNileshApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Restore any saved session so the user stays logged in across reloads.
+  await ApiClient.loadToken();
+  runApp(const ProviderScope(child: SayaliNileshApp()));
+}
 
-class SayaliNileshApp extends StatelessWidget {
+class SayaliNileshApp extends ConsumerWidget {
   const SayaliNileshApp({super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'Sayali Nilesh – Personal Finance Manager',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      scaffoldBackgroundColor: AppColors.background,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppColors.primary,
-        surface: Colors.white,
+  Widget build(BuildContext context, WidgetRef ref) {
+    // When the server rejects the token (expired/invalid), drop auth state so
+    // the app returns to the login screen.
+    ApiClient.onUnauthorized = () {
+      ref.read(authStateProvider.notifier).state = false;
+    };
+
+    final loggedIn = ref.watch(authStateProvider);
+
+    return MaterialApp(
+      title: 'Sayali Nilesh – Personal Finance Manager',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: AppColors.background,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          surface: Colors.white,
+        ),
+        fontFamily: 'Roboto',
       ),
-      fontFamily: 'Roboto',
-    ),
-    home: const MainDashboard(),
-  );
+      home: loggedIn ? const MainDashboard() : const LoginScreen(),
+    );
+  }
 }
 
 class AppColors {
@@ -363,9 +379,24 @@ class _MainDashboardState extends ConsumerState<MainDashboard> {
           backgroundColor: AppColors.purpleLight,
           child: Icon(Icons.person_rounded, color: AppColors.primary, size: 22),
         ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Log out',
+          onPressed: _logout,
+          icon: const Icon(Icons.logout_rounded, color: AppColors.text),
+        ),
       ],
     ),
   );
+
+  Future<void> _logout() async {
+    await ref.read(financeServiceProvider).logout();
+    // Clear any cached data so the next login starts fresh.
+    ref.invalidate(accountsProvider);
+    ref.invalidate(categoriesProvider);
+    ref.invalidate(transactionsProvider);
+    ref.read(authStateProvider.notifier).state = false;
+  }
 
   Widget buildBody() {
     switch (selectedIndex) {

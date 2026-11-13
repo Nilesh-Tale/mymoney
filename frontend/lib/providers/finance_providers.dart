@@ -1,11 +1,18 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
+import '../core/api_client.dart';
 import '../models/finance_models.dart';
 import '../services/finance_service.dart';
 
 final financeServiceProvider = Provider<FinanceService>(
   (ref) => FinanceService(),
+);
+
+/// Whether the user currently holds a token. The UI watches this to decide
+/// between the login screen and the app. Seeded from any persisted token.
+final authStateProvider = StateProvider<bool>(
+  (ref) => ApiClient.isAuthenticated,
 );
 
 final accountsProvider = FutureProvider<List<FinanceAccount>>(

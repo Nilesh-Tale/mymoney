@@ -2,6 +2,21 @@ import '../core/api_client.dart';
 import '../models/finance_models.dart';
 
 class FinanceService {
+  /// Exchanges the shared password for an auth token and stores it.
+  Future<void> login(String password) async {
+    final response = await ApiClient.dio.post(
+      '/api/auth/login',
+      data: {'password': password},
+    );
+    final token = (response.data as Map)['access_token']?.toString();
+    if (token == null || token.isEmpty) {
+      throw Exception('Login failed: no token returned.');
+    }
+    await ApiClient.setToken(token);
+  }
+
+  Future<void> logout() => ApiClient.clearToken();
+
   Future<UserProfile> getProfile() async {
     final response = await ApiClient.dio.get('/api/users/me');
     return UserProfile.fromJson(

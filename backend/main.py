@@ -19,6 +19,7 @@ from models.models import (
     LoginEvent,
     SessionHeartbeat,
     AppSetting,
+    LoginThrottle,
 )
 from routes.api import router, auth_router
 
@@ -114,14 +115,40 @@ async def lifespan(app: FastAPI):
     print("Sayali Nilesh backend stopped.")
 
 
+from auth import is_production
+
+# In production, disable the interactive API docs and the OpenAPI schema so the
+# full route/field map is not published to the world. They remain available in
+# development for convenience.
+_docs_enabled = not is_production()
+
 app = FastAPI(
     title="Sayali Nilesh – Personal Finance Manager",
     description="Personal finance management REST API.",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Add defensive response headers to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+    # This is a JSON API; a strict CSP prevents the responses from being
+    # abused as rendered content.
+    response.headers["Content-Security-Policy"] = "default-src 'none'"
+    if is_production():
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
 
 
 app.include_router(auth_router)

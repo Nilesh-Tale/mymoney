@@ -4,9 +4,13 @@ The whole app is gated behind one password (set via the APP_PASSWORD env var).
 A successful login returns a signed JWT; all data routes require that token.
 
 Environment variables:
-  APP_PASSWORD  - the shared password required to log in. If unset, auth is
-                  effectively disabled for local development (see note below).
-  JWT_SECRET    - secret key used to sign tokens. MUST be set in production.
+  ENVIRONMENT   - "production" (default) or "development". In production the
+                  app fails CLOSED: it refuses to authenticate unless both
+                  APP_PASSWORD and a strong JWT_SECRET are configured.
+  APP_PASSWORD  - the shared password required to log in. Required in prod.
+  JWT_SECRET    - independent random secret used to sign tokens. Required in
+                  prod; must be reasonably long. Never derived from the
+                  password.
   JWT_TTL_DAYS  - token lifetime in days (default 30).
 """
 
@@ -28,8 +32,18 @@ REVOKE_CUTOFF_KEY = "session_revoke_cutoff"
 
 _ALGORITHM = "HS256"
 
+# Minimum acceptable JWT secret length in production.
+_MIN_SECRET_LEN = 16
+
 # Bearer token scheme. auto_error=False so we can return a clean 401 ourselves.
 _bearer = HTTPBearer(auto_error=False)
+
+
+def is_production() -> bool:
+    """Default to production so a misconfigured deploy fails CLOSED, not open.
+    Only an explicit ENVIRONMENT=development (or =dev/local) relaxes this."""
+    env = os.getenv("ENVIRONMENT", "production").strip().lower()
+    return env not in ("development", "dev", "local")
 
 
 def _app_password() -> str | None:
@@ -37,18 +51,33 @@ def _app_password() -> str | None:
     return value or None
 
 
+class _MisconfiguredError(HTTPException):
+    """Returned (503) when the server is missing required security config in
+    production, so it fails closed instead of silently running insecure."""
+
+    def __init__(self, what: str):
+        super().__init__(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Server is not configured securely ({what}). "
+            "Set the required environment variables.",
+        )
+
+
 def _jwt_secret() -> str:
-    # Fall back to the password if no dedicated secret is set, so the app still
-    # works when only APP_PASSWORD is configured. A dedicated JWT_SECRET is
-    # strongly recommended in production.
+    """Return the signing secret.
+
+    SECURITY: the secret is NEVER derived from the password. In production a
+    strong JWT_SECRET is mandatory; if it is missing/weak we refuse to operate.
+    In development only, a clearly-marked insecure constant is allowed so the
+    app runs locally without configuration.
+    """
     secret = os.getenv("JWT_SECRET", "").strip()
-    if secret:
+    if is_production():
+        if len(secret) < _MIN_SECRET_LEN:
+            raise _MisconfiguredError("JWT_SECRET missing or too short")
         return secret
-    password = _app_password()
-    if password:
-        return f"derived-secret::{password}"
-    # Last-resort constant for local dev when nothing is configured.
-    return "insecure-dev-secret-change-me"
+    # Development fallback only.
+    return secret or "insecure-dev-secret-do-not-use-in-production"
 
 
 def _ttl() -> timedelta:
@@ -62,64 +91,77 @@ def _ttl() -> timedelta:
 def verify_password(candidate: str) -> bool:
     """Constant-time comparison of the submitted password against APP_PASSWORD.
 
-    If APP_PASSWORD is not set (local dev), any password is accepted so the
-    app remains usable without configuration.
+    SECURITY: fails CLOSED. If APP_PASSWORD is not configured in production the
+    server refuses all logins (503) rather than letting anyone in. Only in
+    development is an unset password treated as "open".
     """
     expected = _app_password()
     if expected is None:
-        return True
+        if is_production():
+            raise _MisconfiguredError("APP_PASSWORD not set")
+        return True  # development convenience only
     return hmac.compare_digest(candidate or "", expected)
 
 
 # ---------------------------------------------------------
-# LOGIN RATE LIMITING (in-memory, per IP)
+# LOGIN RATE LIMITING (DB-backed, per IP)
 # ---------------------------------------------------------
 #
 # After MAX_FAILURES failed attempts within WINDOW, an IP is locked out for
-# LOCKOUT. A successful login clears that IP's failure record. State is
-# in-memory: it resets if the service restarts, which is acceptable for a
-# single-instance deployment and fails safe (never locks out legitimately).
+# LOCKOUT seconds. A successful login clears that IP. State is stored in the
+# database so it SURVIVES server restarts (the free host sleeps/restarts often,
+# which would otherwise reset an attacker's failure count).
 
 import time as _time
-from threading import Lock as _Lock
 
 _MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 _WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))      # 15 min
 _LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))    # 15 min
 
-_failures: dict[str, list[float]] = {}
-_lockouts: dict[str, float] = {}
-_rl_lock = _Lock()
 
-
-def rate_limit_check(ip: str) -> int | None:
+def rate_limit_check(db: Session, ip: str) -> int | None:
     """Return seconds remaining in lockout if the IP is locked, else None."""
-    now = _time.time()
-    with _rl_lock:
-        until = _lockouts.get(ip)
-        if until is not None:
-            if now < until:
-                return int(until - now) + 1
-            # Lockout expired.
-            _lockouts.pop(ip, None)
-            _failures.pop(ip, None)
+    from models.models import LoginThrottle
+
+    now = int(_time.time())
+    row = db.get(LoginThrottle, ip)
+    if row is None:
+        return None
+    if row.locked_until and now < row.locked_until:
+        return row.locked_until - now + 1
     return None
 
 
-def record_failure(ip: str) -> None:
-    now = _time.time()
-    with _rl_lock:
-        hits = [t for t in _failures.get(ip, []) if now - t < _WINDOW_SECONDS]
-        hits.append(now)
-        _failures[ip] = hits
-        if len(hits) >= _MAX_FAILURES:
-            _lockouts[ip] = now + _LOCKOUT_SECONDS
+def record_failure(db: Session, ip: str) -> None:
+    from models.models import LoginThrottle
+
+    now = int(_time.time())
+    row = db.get(LoginThrottle, ip)
+    if row is None:
+        row = LoginThrottle(
+            ip_address=ip, fail_count=0, window_start=now, locked_until=0
+        )
+        db.add(row)
+
+    # Reset the counting window if it has elapsed.
+    if now - row.window_start > _WINDOW_SECONDS:
+        row.window_start = now
+        row.fail_count = 0
+
+    row.fail_count += 1
+    if row.fail_count >= _MAX_FAILURES:
+        row.locked_until = now + _LOCKOUT_SECONDS
+
+    db.commit()
 
 
-def record_success(ip: str) -> None:
-    with _rl_lock:
-        _failures.pop(ip, None)
-        _lockouts.pop(ip, None)
+def record_success(db: Session, ip: str) -> None:
+    from models.models import LoginThrottle
+
+    row = db.get(LoginThrottle, ip)
+    if row is not None:
+        db.delete(row)
+        db.commit()
 
 
 def new_session_id() -> str:
@@ -169,8 +211,11 @@ def require_auth(
     """
     from models.models import SessionHeartbeat
 
-    # If no password is configured (local dev), skip the check entirely.
+    # If no password is configured: in dev, skip auth entirely; in production,
+    # fail CLOSED (refuse the request) rather than exposing data.
     if _app_password() is None:
+        if is_production():
+            raise _MisconfiguredError("APP_PASSWORD not set")
         return None
 
     if credentials is None or not credentials.credentials:

@@ -184,3 +184,16 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
     value: Mapped[str] = mapped_column(String(200), default="")
+
+
+class LoginThrottle(Base):
+    """Per-IP failed-login tracking, persisted so brute-force protection
+    survives server restarts (the free host sleeps and restarts often)."""
+
+    __tablename__ = "login_throttle"
+
+    ip_address: Mapped[str] = mapped_column(String(64), primary_key=True)
+    fail_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Window start and lockout expiry as unix timestamps (seconds).
+    window_start: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

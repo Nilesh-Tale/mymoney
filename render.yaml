@@ -25,11 +25,17 @@ services:
       # Example: https://your-username.github.io
       - key: CORS_ALLOW_ORIGINS
         sync: false
+      # Run in production mode: the app fails CLOSED if APP_PASSWORD or a
+      # strong JWT_SECRET is missing (refuses requests instead of exposing
+      # data). Set ENVIRONMENT=development only for local work.
+      - key: ENVIRONMENT
+        value: production
       # The single shared password required to log into the app.
       # Set this in the Render dashboard (keep it secret, not in git).
       - key: APP_PASSWORD
         sync: false
-      # Secret used to sign login tokens. Render can generate a random value.
+      # Independent random secret used to sign login tokens. REQUIRED in
+      # production and never derived from the password. Render generates one.
       - key: JWT_SECRET
         generateValue: true
       # How long a login stays valid, in days.

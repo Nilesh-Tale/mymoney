@@ -93,7 +93,7 @@ def login(
     ua = _user_agent(request)
 
     # 1) Rate-limit: reject if this IP is currently locked out.
-    locked_for = rate_limit_check(ip)
+    locked_for = rate_limit_check(db, ip)
     if locked_for is not None:
         db.add(LoginEvent(success=False, ip_address=ip, user_agent=ua))
         db.commit()
@@ -108,7 +108,7 @@ def login(
 
     # 2) Verify the shared password.
     if not verify_password(payload.password):
-        record_failure(ip)
+        record_failure(db, ip)
         db.add(LoginEvent(success=False, ip_address=ip, user_agent=ua))
         db.commit()
         raise HTTPException(
@@ -117,7 +117,7 @@ def login(
         )
 
     # 3) Success: clear failures, issue token, log the event.
-    record_success(ip)
+    record_success(db, ip)
     session_id = new_session_id()
     db.add(
         LoginEvent(
